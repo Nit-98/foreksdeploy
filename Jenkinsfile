@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -5,16 +6,16 @@ pipeline {
         AWS_REGION     = 'ap-south-2'
         AWS_ACCOUNT_ID = '201971881499'
         ECR_REPO       = 'myapp'
-        IMAGE_TAG      = 'v2'
+        IMAGE_TAG      = "${BUILD_NUMBER}"
         KUBECONFIG     = '/var/lib/jenkins/.kube/config'
+        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
     }
 
     stages {
 
         stage('Checkout Code') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/Nit-98/foreksdeploy.git'
+                checkout scm
             }
         }
 
@@ -33,8 +34,7 @@ pipeline {
                         --region ${AWS_REGION} |
                     docker login \
                         --username AWS \
-                        --password-stdin \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                        --password-stdin ${ECR_REGISTRY}
                 '''
             }
         }
@@ -43,10 +43,10 @@ pipeline {
             steps {
                 sh '''
                     docker tag ${ECR_REPO}:${IMAGE_TAG} \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                        ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}
 
                     docker push \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                        ${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}
                 '''
             }
         }
@@ -54,9 +54,11 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
+                    sed "s|IMAGE_TAG|${IMAGE_TAG}|g" \
+                        deployment.yaml > deployment-rendered.yaml
+
                     kubectl --kubeconfig="${KUBECONFIG}" \
-                        set image deployment/myapp \
-                        myapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                        apply -f deployment-rendered.yaml
 
                     kubectl --kubeconfig="${KUBECONFIG}" \
                         rollout status deployment/myapp \
@@ -68,10 +70,12 @@ pipeline {
 
     post {
         success {
-            echo 'CI/CD completed: Image pushed to ECR and deployed to Kubernetes!'
+            echo 'SUCCESS: Image pushed to ECR and Kubernetes deployment completed!'
         }
+
         failure {
-            echo 'CI/CD failed. Check the failed stage in the Jenkins console output.'
+            echo 'FAILED: Check the Jenkins Console Output for the error.'
         }
     }
 }
+
